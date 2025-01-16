@@ -1,11 +1,12 @@
-const BaseDNS = require('./base')
 const matchUtil = require('../../utils/util.match')
+const BaseDNS = require('./base')
 
 function mapToList (ipMap) {
   const ipList = []
   for (const key in ipMap) {
-    if (!ipMap[key]) continue
-    ipList.push(ipMap[key])
+    if (ipMap[key]) { // 配置为 ture 时才生效
+      ipList.push(key)
+    }
   }
   return ipList
 }

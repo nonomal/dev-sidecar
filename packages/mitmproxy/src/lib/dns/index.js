@@ -1,8 +1,8 @@
-const DNSOverTLS = require('./tls.js')
+const matchUtil = require('../../utils/util.match')
 const DNSOverHTTPS = require('./https.js')
 const DNSOverIpAddress = require('./ipaddress.js')
 const DNSOverPreSetIpList = require('./preset.js')
-const matchUtil = require('../../utils/util.match')
+const DNSOverTLS = require('./tls.js')
 
 module.exports = {
   initDNS (dnsProviders, preSetIpList) {
@@ -13,11 +13,11 @@ module.exports = {
       const conf = dnsProviders[provider]
 
       if (conf.type === 'ipaddress') {
-        dnsMap[provider] = new DNSOverIpAddress(conf.server)
+        dnsMap[provider] = new DNSOverIpAddress(provider)
       } else if (conf.type === 'https') {
-        dnsMap[provider] = new DNSOverHTTPS(conf.server, preSetIpList)
+        dnsMap[provider] = new DNSOverHTTPS(provider, conf.server, preSetIpList)
       } else {
-        dnsMap[provider] = new DNSOverTLS(conf.server)
+        dnsMap[provider] = new DNSOverTLS(provider)
       }
 
       // 设置DNS名称到name属性中
@@ -50,5 +50,5 @@ module.exports = {
     if (providerName) {
       return dnsConfig.dnsMap[providerName]
     }
-  }
+  },
 }

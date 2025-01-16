@@ -1,12 +1,12 @@
-const fs = require('fs')
-const Shell = require('./shell')
-const lodash = require('lodash')
-const defConfig = require('./config/index.js')
+const fs = require('node:fs')
+const path = require('node:path')
 const jsonApi = require('@docmirror/mitmproxy/src/json')
+const lodash = require('lodash')
 const request = require('request')
-const path = require('path')
-const log = require('./utils/util.log')
+const defConfig = require('./config/index.js')
 const mergeApi = require('./merge.js')
+const Shell = require('./shell')
+const log = require('./utils/util.log')
 
 let configTarget = lodash.cloneDeep(defConfig)
 
@@ -30,6 +30,7 @@ function _getConfigPath () {
   const dir = getDefaultConfigBasePath()
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir)
+    return path.join(dir, '/config.json')
   } else {
     // 兼容1.7.3及以下版本的配置文件处理逻辑
     const newFilePath = path.join(dir, '/config.json')
@@ -39,7 +40,6 @@ function _getConfigPath () {
     }
     return newFilePath
   }
-  return path.join(dir, '/config.json')
 }
 
 let timer
@@ -80,13 +80,13 @@ const configApi = {
       configApi.deleteRemoteConfigFile(suffix)
       return
     }
-    // eslint-disable-next-line handle-callback-err
+
     return new Promise((resolve, reject) => {
       log.info('开始下载远程配置:', remoteConfigUrl)
 
       const headers = {
         'Cache-Control': 'no-cache', // 禁止使用缓存
-        Pragma: 'no-cache' // 禁止使用缓存
+        'Pragma': 'no-cache', // 禁止使用缓存
       }
       if (remoteConfigUrl.startsWith('https://raw.githubusercontent.com/')) {
         headers['Server-Name'] = 'baidu.com'
@@ -110,7 +110,7 @@ const configApi = {
           let remoteConfig
           try {
             remoteConfig = jsonApi.parse(body)
-          } catch (e) {
+          } catch {
             log.error(`远程配置内容格式不正确, url: ${remoteConfigUrl}, body: ${body}`)
             remoteConfig = null
           }
@@ -131,7 +131,7 @@ const configApi = {
           if (response) {
             message = `下载远程配置失败: ${remoteConfigUrl}, message: ${response.message}, code: ${response.statusCode}`
           } else {
-            message = '下载远程配置失败: response: ' + response
+            message = `下载远程配置失败: response: ${response}`
           }
           reject(new Error(message))
         }
@@ -205,14 +205,13 @@ const configApi = {
 
     return {
       diffConfig,
-      allConfig
+      allConfig,
     }
   },
   doMerge: mergeApi.doMerge,
   doDiff: mergeApi.doDiff,
   /**
    * 读取 config.json 后，合并配置
-   * @returns {*}
    */
   reload () {
     const configPath = _getConfigPath()
@@ -330,31 +329,31 @@ const configApi = {
       list.push({
         key,
         value: map[key],
-        exists
+        exists,
       })
     }
     return list
   },
   async setVariables (type) {
     const list = await configApi.getVariables(type)
-    const noSetList = list.filter(item => {
+    const noSetList = list.filter((item) => {
       return !item.exists
     })
     if (list.length > 0) {
       const context = {
-        root_ca_cert_path: configApi.get().server.setting.rootCaFile.certPath
+        root_ca_cert_path: configApi.get().server.setting.rootCaFile.certPath,
       }
       for (const item of noSetList) {
-        if (item.value.indexOf('${') >= 0) {
+        if (item.value.includes('${')) {
           for (const key in context) {
-            item.value = item.value.replcace(new RegExp('${' + key + '}', 'g'), context[key])
+            item.value = item.value.replcace(new RegExp(`\${${key}}`, 'g'), context[key])
           }
         }
       }
       const method = type === 'npm' ? Shell.setNpmEnv : Shell.setSystemEnv
       return method({ list: noSetList })
     }
-  }
+  },
 }
 
 module.exports = configApi
