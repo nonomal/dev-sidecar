@@ -1,26 +1,34 @@
-const url = require('url')
-const request = require('request')
+const { Buffer } = require('node:buffer')
+const fs = require('node:fs')
+const path = require('node:path')
+const url = require('node:url')
 const lodash = require('lodash')
-const pac = require('./source/pac')
+const request = require('request')
+const log = require('../../../utils/util.log.server')
 const matchUtil = require('../../../utils/util.match')
-const log = require('../../../utils/util.log')
-const path = require('path')
-const fs = require('fs')
-const { Buffer } = require('buffer')
+const pac = require('./source/pac')
+const dateUtil = require('@docmirror/dev-sidecar/src/utils/util.date')
+
 let pacClient = null
 
 function matched (hostname, overWallTargetMap) {
+  // 匹配配置文件
   const ret1 = matchUtil.matchHostname(overWallTargetMap, hostname, 'matched overwall')
   if (ret1) {
-    return 'overwall config'
+    return 'in config'
+  } else if (ret1 === false || ret1 === 'false') {
+    log.debug(`域名 ${hostname} 的overwall配置为 false，跳过增强功能，即使它在 pac.txt 里`)
+    return null
   }
+
+  // 匹配 pac.txt
   if (pacClient == null) {
     return null
   }
-  const ret = pacClient.FindProxyForURL('https://' + hostname, hostname)
+  const ret = pacClient.FindProxyForURL(`https://${hostname}`, hostname)
   if (ret && ret.indexOf('PROXY ') === 0) {
     log.info(`matchHostname: matched overwall: '${hostname}' -> '${ret}' in pac.txt`)
-    return 'overwall pac'
+    return 'in pac.txt'
   } else {
     log.debug(`matchHostname: matched overwall: Not-Matched '${hostname}' -> '${ret}' in pac.txt`)
     return null
@@ -42,32 +50,27 @@ function loadPacLastModifiedTime (pacTxt) {
   if (matched && matched.length > 0) {
     try {
       return new Date(matched[0])
-    } catch (ignore) {
+    } catch {
       return null
     }
   }
 }
 
-function formatDate (date) {
-  const year = date.getFullYear()
-  const month = (date.getMonth() + 1).toString().padStart(2, '0')
-  const day = date.getDate().toString().padStart(2, '0')
-  const hours = date.getHours().toString().padStart(2, '0')
-  const minutes = date.getMinutes().toString().padStart(2, '0')
-  const seconds = date.getSeconds().toString().padStart(2, '0')
-  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
-}
-
 // 保存 pac 内容到 `~/pac.txt` 文件中
 function savePacFile (pacTxt) {
   const pacFilePath = getTmpPacFilePath()
-  fs.writeFileSync(pacFilePath, pacTxt)
-  log.info('保存 pac.txt 文件成功:', pacFilePath)
+  try {
+    fs.writeFileSync(pacFilePath, pacTxt)
+    log.info('保存 pac.txt 文件成功:', pacFilePath)
+  } catch (e) {
+    log.error('保存 pac.txt 文件失败:', pacFilePath, ', error:', e)
+    return
+  }
 
   // 尝试解析和修改 pac.txt 文件时间
   const lastModifiedTime = loadPacLastModifiedTime(pacTxt)
   if (lastModifiedTime) {
-    fs.stat(pacFilePath, (err, stats) => {
+    fs.stat(pacFilePath, (err, _stats) => {
       if (err) {
         log.error('修改 pac.txt 文件时间失败:', err)
         return
@@ -78,13 +81,11 @@ function savePacFile (pacTxt) {
         if (utimesErr) {
           log.error('修改 pac.txt 文件时间失败:', utimesErr)
         } else {
-          log.info(`'${pacFilePath}' 文件的修改时间已更新为其最近更新时间 '${formatDate(lastModifiedTime)}'`)
+          log.info(`'${pacFilePath}' 文件的修改时间已更新为其最近更新时间 '${dateUtil.format(lastModifiedTime, false)}'`)
         }
       })
     })
   }
-
-  return pacFilePath
 }
 
 // 异步下载 pac.txt ，避免影响代理服务的启动速度
@@ -106,13 +107,11 @@ async function downloadPacAsync (pacConfig) {
 
       // 尝试解析Base64（注：https://gitlab.com/gfwlist/gfwlist/raw/master/gfwlist.txt 下载下来的是Base64格式）
       let pacTxt = body
-      try {
-        if (pacTxt.indexOf('!---------------------EOF') < 0) {
+      if (!pacTxt.includes('!---------------------EOF')) {
+        try {
           pacTxt = Buffer.from(pacTxt, 'base64').toString('utf8')
           // log.debug('解析 base64 后的 pax:', pacTxt)
-        }
-      } catch (e) {
-        if (pacTxt.indexOf('!---------------------EOF') < 0) {
+        } catch {
           log.error(`远程 pac.txt 文件内容即不是base64格式，也不是要求的格式，url: ${remotePacFileUrl}，body: ${body}`)
           return
         }
@@ -146,11 +145,11 @@ function createOverwallMiddleware (overWallConfig) {
   }
   const overWallTargetMap = matchUtil.domainMapRegexply(overWallConfig.targets)
   return {
-    sslConnectInterceptor: (req, cltSocket, head) => {
+    sslConnectInterceptor: (req, _cltSocket, _head) => {
       const hostname = req.url.split(':')[0]
       return matched(hostname, overWallTargetMap)
     },
-    requestIntercept (context, req, res, ssl, next) {
+    requestIntercept (context, req, res, _ssl, _next) {
       const { rOptions, log, RequestCounter } = context
       if (rOptions.protocol === 'http:') {
         return
@@ -175,7 +174,7 @@ function createOverwallMiddleware (overWallConfig) {
           context.requestCount = {
             key: cacheKey,
             value: count.value,
-            count
+            count,
           }
         }
       }
@@ -184,10 +183,10 @@ function createOverwallMiddleware (overWallConfig) {
       const port = server[domain].port
       const path = server[domain].path
       const password = server[domain].password
-      const proxyTarget = domain + '/' + path + '/' + hostname + req.url
+      const proxyTarget = `${domain}/${path}/${hostname}${req.url}`
 
       // const backup = interceptOpt.backup
-      const proxy = proxyTarget.indexOf('http:') === 0 || proxyTarget.indexOf('https:') === 0 ? proxyTarget : (rOptions.protocol + '//' + proxyTarget)
+      const proxy = proxyTarget.indexOf('http:') === 0 || proxyTarget.indexOf('https:') === 0 ? proxyTarget : (`${rOptions.protocol}//${proxyTarget}`)
       // eslint-disable-next-line node/no-deprecated-api
       const URL = url.parse(proxy)
       rOptions.origional = lodash.cloneDeep(rOptions) // 备份原始请求参数
@@ -212,12 +211,12 @@ function createOverwallMiddleware (overWallConfig) {
       res.setHeader('DS-Overwall', matchedResult)
 
       return true
-    }
+    },
   }
 }
 
 module.exports = {
   getTmpPacFilePath,
   downloadPacAsync,
-  createOverwallMiddleware
+  createOverwallMiddleware,
 }

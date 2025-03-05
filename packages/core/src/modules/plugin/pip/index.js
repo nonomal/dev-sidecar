@@ -1,4 +1,5 @@
 const pipConfig = require('./config')
+
 const PipPlugin = function (context) {
   const { config, shell, event, log } = context
   const api = {
@@ -20,7 +21,7 @@ const PipPlugin = function (context) {
     },
     async getPipEnv () {
       const command = config.get().plugin.pip.setting.command
-      let ret = await shell.exec([command + ' config list'], { type: 'cmd' })
+      let ret = await shell.exec([`${command} config list`], { type: 'cmd' })
       if (ret != null) {
         ret = ret.trim()
         const lines = ret.split('\n')
@@ -51,8 +52,7 @@ const PipPlugin = function (context) {
           cmds.push(`${command} config unset  global.${item.key}`)
         }
       }
-      const ret = await shell.exec(cmds, { type: 'cmd' })
-      return ret
+      return await shell.exec(cmds, { type: 'cmd' })
     },
 
     async unsetPipEnv (list) {
@@ -61,8 +61,7 @@ const PipPlugin = function (context) {
       for (const item of list) {
         cmds.push(`${command} config unset  global.${item} `)
       }
-      const ret = await shell.exec(cmds, { type: 'cmd' })
-      return ret
+      return await shell.exec(cmds, { type: 'cmd' })
     },
 
     async setRegistry ({ registry }) {
@@ -81,7 +80,7 @@ const PipPlugin = function (context) {
 
     async unsetProxy () {
 
-    }
+    },
   }
   return api
 }
@@ -90,7 +89,7 @@ module.exports = {
   key: 'pip',
   config: pipConfig,
   status: {
-    enabled: false
+    enabled: false,
   },
-  plugin: PipPlugin
+  plugin: PipPlugin,
 }

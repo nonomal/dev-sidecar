@@ -1,5 +1,5 @@
 const lodash = require('lodash')
-const log = require('./util.log')
+const log = require('./util.log.server')
 
 function isMatched (url, regexp) {
   if (regexp === '.*' || regexp === '*' || regexp === 'true' || regexp === true) {
@@ -9,10 +9,10 @@ function isMatched (url, regexp) {
   try {
     let urlRegexp = regexp
     if (regexp[0] === '*' || regexp[0] === '?' || regexp[0] === '+') {
-      urlRegexp = '.' + regexp
+      urlRegexp = `.${regexp}`
     }
     return url.match(urlRegexp)
-  } catch (e) {
+  } catch {
     log.error('匹配串有问题:', regexp)
     return null
   }
@@ -22,7 +22,7 @@ function domainRegexply (target) {
   if (target === '.*' || target === '*' || target === 'true' || target === true) {
     return '^.*$'
   }
-  return '^' + target.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$'
+  return `^${target.replace(/\./g, '\\.').replace(/\*/g, '.*')}$`
 }
 
 function domainMapRegexply (hostMap) {
@@ -32,15 +32,27 @@ function domainMapRegexply (hostMap) {
   const regexpMap = {}
   const origin = {} // 用于快速匹配，见matchHostname、matchHostnameAll方法
   lodash.each(hostMap, (value, domain) => {
-    if (domain.indexOf('*') >= 0 || domain[0] === '^') {
-      const regDomain = domain[0] !== '^' ? domainRegexply(domain) : domain
-      regexpMap[regDomain] = value
+    try {
+      // 将域名匹配串格式如 `.xxx.com` 转换为 `*.xxx.com`
+      if (domain[0] === '.') {
+        if (hostMap[`*${domain}`] != null) {
+          return // 如果已经有匹配串 `*.xxx.com`，则忽略 `.xxx.com`
+        }
+        domain = `*${domain}`
+      }
 
-      if (domain.indexOf('*') === 0 && domain.lastIndexOf('*') === 0) {
+      if (domain.includes('*') || domain[0] === '^') {
+        const regDomain = domain[0] !== '^' ? domainRegexply(domain) : domain
+        regexpMap[regDomain] = value
+
+        if (domain.indexOf('*') === 0 && domain.lastIndexOf('*') === 0) {
+          origin[domain] = value
+        }
+      } else {
         origin[domain] = value
       }
-    } else {
-      origin[domain] = value
+    } catch (e) {
+      log.error('匹配串有问题:', domain, e)
     }
   })
   regexpMap.origin = origin
@@ -59,20 +71,21 @@ function matchHostname (hostMap, hostname, action) {
     return null
   }
 
-  // 域名快速匹配：直接匹配 或者 两种前缀通配符匹配
+  // 域名快速匹配：直接匹配（优先级最高）
   let value = hostMap.origin[hostname]
-  if (value) {
+  if (value != null) {
     log.info(`matchHostname: ${action}: '${hostname}' -> { "${hostname}": ${JSON.stringify(value)} }`)
     return value // 快速匹配成功
   }
-  value = hostMap.origin['*' + hostname]
-  if (value) {
-    log.info(`matchHostname: ${action}: '${hostname}' -> { "*${hostname}": ${JSON.stringify(value)} }`)
+  // 域名快速匹配：三种前缀通配符匹配
+  value = hostMap.origin[`*.${hostname}`]
+  if (value != null) {
+    log.info(`matchHostname: ${action}: '${hostname}' -> { "*.${hostname}": ${JSON.stringify(value)} }`)
     return value // 快速匹配成功
   }
-  value = hostMap.origin['*.' + hostname]
-  if (value) {
-    log.info(`matchHostname: ${action}: '${hostname}' -> { "*.${hostname}": ${JSON.stringify(value)} }`)
+  value = hostMap.origin[`*${hostname}`]
+  if (value != null) {
+    log.info(`matchHostname: ${action}: '${hostname}' -> { "*${hostname}": ${JSON.stringify(value)} }`)
     return value // 快速匹配成功
   }
 
@@ -94,7 +107,7 @@ function matchHostname (hostMap, hostname, action) {
 }
 
 function merge (oldObj, newObj) {
-  return lodash.mergeWith(oldObj, newObj, function (objValue, srcValue) {
+  return lodash.mergeWith(oldObj, newObj, (objValue, srcValue) => {
     if (lodash.isArray(objValue)) {
       return srcValue
     }
@@ -146,13 +159,13 @@ function matchHostnameAll (hostMap, hostname, action) {
 
   // 域名快速匹配：直接匹配 或者 两种前缀通配符匹配
   // 优先级：2
-  value = hostMap.origin['*' + hostname]
+  value = hostMap.origin[`*${hostname}`]
   if (value) {
     log.debug(`matchHostname-one: ${action}: '${hostname}' -> { "*${hostname}": ${JSON.stringify(value)} }`)
     values = merge(values, value)
   }
   // 优先级：3
-  value = hostMap.origin['*.' + hostname]
+  value = hostMap.origin[`*.${hostname}`]
   if (value) {
     log.debug(`matchHostname-one: ${action}: '${hostname}' -> { "*.${hostname}": ${JSON.stringify(value)} }`)
     values = merge(values, value)
@@ -178,5 +191,5 @@ module.exports = {
   domainRegexply,
   domainMapRegexply,
   matchHostname,
-  matchHostnameAll
+  matchHostnameAll,
 }

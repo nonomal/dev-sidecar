@@ -1,7 +1,7 @@
-const path = require('path')
+const fs = require('node:fs')
+const path = require('node:path')
 const AdmZip = require('adm-zip')
 const pkg = require('../package.json')
-const fs = require('fs')
 
 function writeAppUpdateYmlForLinux () {
   const publishUrl = process.env.VUE_APP_PUBLISH_URL
@@ -18,9 +18,8 @@ updaterCacheDirName: '@docmirrordev-sidecar-gui-updater'
   fs.writeFileSync(filePath, fileContent)
 }
 exports.default = async function (context) {
-  // console.log('context', context)
   let targetPath
-  let systemType = ''
+  let systemType
   if (context.packager.platform.nodeName === 'darwin') {
     targetPath = path.join(context.appOutDir, `${context.packager.appInfo.productName}.app/Contents/Resources`)
     systemType = 'mac'

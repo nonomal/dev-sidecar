@@ -1,14 +1,15 @@
-const http = require('http')
-const https = require('https')
-const commonUtil = require('../common/util')
+const http = require('node:http')
+const https = require('node:https')
 const jsonApi = require('../../../json')
-// const upgradeHeader = /(^|,)\s*upgrade\s*($|,)/i
-const DnsUtil = require('../../dns/index')
-const log = require('../../../utils/util.log')
+const log = require('../../../utils/util.log.server')
 const RequestCounter = require('../../choice/RequestCounter')
+const commonUtil = require('../common/util')
+// const upgradeHeader = /(^|,)\s*upgrade\s*($|,)/i
+const DnsUtil = require('../../dns')
+const compatible = require('../compatible/compatible')
 const InsertScriptMiddleware = require('../middleware/InsertScriptMiddleware')
 const dnsLookup = require('./dnsLookup')
-const compatible = require('../compatible/compatible')
+
 const MAX_SLOW_TIME = 8000 // 超过此时间 则认为太慢了
 
 // create requestHandler function
@@ -31,16 +32,16 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
       rOptions,
       log,
       RequestCounter,
-      setting
+      setting,
     }
     let interceptors = createIntercepts(context)
     if (interceptors == null) {
       interceptors = []
     }
-    const reqIncpts = interceptors.filter(item => {
+    const reqIncpts = interceptors.filter((item) => {
       return item.requestIntercept != null
     })
-    const resIncpts = interceptors.filter(item => {
+    const resIncpts = interceptors.filter((item) => {
       return item.responseIntercept != null
     })
 
@@ -63,7 +64,9 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
               }
               const goNext = reqIncpt.requestIntercept(context, req, res, ssl, next)
               if (goNext) {
-                if (goNext !== 'no-next') next()
+                if (goNext !== 'no-next') {
+                  next()
+                }
                 return
               }
             }
@@ -81,7 +84,7 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
       if (isDnsIntercept && isDnsIntercept.dns && isDnsIntercept.ip !== isDnsIntercept.hostname) {
         const { dns, ip, hostname } = isDnsIntercept
         dns.count(hostname, ip, true)
-        log.error(`记录ip失败次数，用于优选ip！ hostname: ${hostname}, ip: ${ip}, reason: ${reason}, dns: ${dns.name}`)
+        log.error(`记录ip失败次数，用于优选ip！ hostname: ${hostname}, ip: ${ip}, reason: ${reason}, dns: ${dns.dnsName}`)
       }
       const counter = context.requestCount
       if (counter != null) {
@@ -107,7 +110,7 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
         function onFree () {
           url = `${rOptions.method} ➜ ${rOptions.protocol}//${rOptions.hostname}:${rOptions.port}${rOptions.path}`
           const start = new Date()
-          log.info('发起代理请求:', url, (rOptions.servername ? ', sni: ' + rOptions.servername : ''), ', headers:', jsonApi.stringify2(rOptions.headers))
+          log.info('发起代理请求:', url, (rOptions.servername ? `, sni: ${rOptions.servername}` : ''), ', headers:', jsonApi.stringify2(rOptions.headers))
 
           const isDnsIntercept = {}
           if (dnsConfig && dnsConfig.dnsMap) {
@@ -120,8 +123,8 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
             }
             if (dns) {
               rOptions.lookup = dnsLookup.createLookupFunc(res, dns, 'request url', url, isDnsIntercept)
-              log.debug(`域名 ${rOptions.hostname} DNS: ${dns.name}`)
-              res.setHeader('DS-DNS', dns.name)
+              log.debug(`域名 ${rOptions.hostname} DNS: ${dns.dnsName}`)
+              res.setHeader('DS-DNS', dns.dnsName)
             } else {
               log.info(`域名 ${rOptions.hostname} 在DNS中未配置`)
             }
@@ -157,7 +160,7 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
             } else {
               log.info(`请求返回: 【${proxyRes.statusCode}】${url}, cost: ${cost} ms`)
             }
-            // console.log('request:', proxyReq, proxyReq.socket)
+            // log.info('request:', proxyReq, proxyReq.socket)
 
             if (cost > MAX_SLOW_TIME) {
               countSlow(isDnsIntercept, `代理请求成功但太慢, cost: ${cost} ms > ${MAX_SLOW_TIME} ms`)
@@ -181,7 +184,7 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
           proxyReq.on('error', (e) => {
             const cost = new Date() - start
             log.error(`代理请求错误: ${url}, cost: ${cost} ms, error:`, e, ', rOptions:', jsonApi.stringify2(rOptions))
-            countSlow(isDnsIntercept, '代理请求错误: ' + e.message)
+            countSlow(isDnsIntercept, `代理请求错误: ${e.message}`)
             reject(e)
 
             // 自动兼容程序：2
@@ -205,7 +208,7 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
           })
 
           // 原始请求的事件监听
-          req.on('aborted', function () {
+          req.on('aborted', () => {
             const cost = new Date() - start
             const errorMsg = `请求被取消: ${url}, cost: ${cost} ms`
             log.error(errorMsg, ', rOptions:', jsonApi.stringify2(rOptions))
@@ -215,7 +218,7 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
             }
             reject(new Error(errorMsg))
           })
-          req.on('error', function (e, req, res) {
+          req.on('error', (e, req, res) => {
             const cost = new Date() - start
             log.error(`请求错误: ${url}, cost: ${cost} ms, error:`, e, ', rOptions:', jsonApi.stringify2(rOptions))
             reject(e)
@@ -243,10 +246,10 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
       const proxyRes = await proxyRequestPromise()
 
       // proxyRes.on('data', (chunk) => {
-      //   // console.log('BODY: ')
+      //   // log.info('BODY: ')
       // })
       proxyRes.on('error', (error) => {
-        countSlow(null, 'error: ' + error.message)
+        countSlow(null, `error: ${error.message}`)
         log.error(`proxy res error: ${url}, error:`, error)
       })
 
@@ -287,7 +290,7 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
             }
             InsertScriptMiddleware.responseInterceptor(req, res, proxyReq, proxyRes, ssl, next, {
               head,
-              body
+              body,
             })
           } else {
             next()
@@ -300,7 +303,7 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
       await responseInterceptorPromise
 
       if (!res.headersSent) { // prevent duplicate set headers
-        Object.keys(proxyRes.headers).forEach(function (key) {
+        Object.keys(proxyRes.headers).forEach((key) => {
           if (proxyRes.headers[key] !== undefined) {
             // https://github.com/nodejitsu/node-http-proxy/issues/362
             if (/^www-authenticate$/i.test(key)) {
@@ -314,19 +317,19 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
         })
 
         if (proxyRes.statusCode >= 400) {
-          countSlow(null, 'Status return: ' + proxyRes.statusCode)
+          countSlow(null, `Status return: ${proxyRes.statusCode}`)
         }
         res.writeHead(proxyRes.statusCode)
         proxyRes.pipe(res)
       }
-    })().catch(e => {
+    })().catch((e) => {
       if (!res.writableEnded) {
         try {
           const status = e.status || 500
           res.writeHead(status, { 'Content-Type': 'text/html;charset=UTF8' })
           res.write(`DevSidecar Error:<br/>
 目标网站请求错误：【${e.code}】 ${e.message}<br/>
-目标地址：${rOptions.protocol}//${rOptions.hostname}:${rOptions.port}${rOptions.path}`
+目标地址：${rOptions.protocol}//${rOptions.hostname}:${rOptions.port}${rOptions.path}`,
           )
         } catch (e) {
           // do nothing
@@ -343,7 +346,7 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
           const ignoreErrors = [
             '代理请求错误: ',
             '代理请求超时: ',
-            '代理请求被取消: '
+            '代理请求被取消: ',
           ]
           for (const ignoreError of ignoreErrors) {
             if (e.message.startsWith(ignoreError)) {
